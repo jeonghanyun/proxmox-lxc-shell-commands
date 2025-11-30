@@ -374,7 +374,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/taskosaur
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/npm run start:backend
+ExecStart=/usr/bin/npm run start:prod --workspace=backend
 Restart=always
 RestartSec=10s
 StartLimitBurst=5
@@ -398,7 +398,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/taskosaur
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/npm run start:frontend
+ExecStart=/usr/bin/npm run start --workspace=frontend
 Restart=always
 RestartSec=10s
 StartLimitBurst=5
