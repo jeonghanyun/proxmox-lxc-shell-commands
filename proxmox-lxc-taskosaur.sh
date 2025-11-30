@@ -3,7 +3,7 @@
 # Proxmox LXC Taskosaur Installation Script
 # Description: Automated creation and configuration of Taskosaur project management with AI
 # OS: Debian 12 (Bookworm) - Auto-detected latest version
-# Taskosaur Ports: Frontend 3001, Backend API 3000
+# Taskosaur Ports: Frontend 3000, Backend API 3001
 # Repository: https://github.com/jeonghanyun/proxmox-lxc-shell-commands
 # Last Updated: 2025-11-30
 
@@ -38,11 +38,14 @@ TEMPLATE_NAME=""                                        # Auto-detected
 # Taskosaur Configuration
 TASKOSAUR_FRONTEND_PORT=${TASKOSAUR_FRONTEND_PORT:-3000}  # Frontend port (main access)
 TASKOSAUR_BACKEND_PORT=${TASKOSAUR_BACKEND_PORT:-3001}    # Backend API port
-TASKOSAUR_FRONTEND_INTERNAL_PORT=3002                      # Frontend internal port (behind Nginx)
 TASKOSAUR_DB_PASSWORD=${TASKOSAUR_DB_PASSWORD:-"taskosaur_$(openssl rand -hex 8)"}
 TASKOSAUR_JWT_SECRET=${TASKOSAUR_JWT_SECRET:-"$(openssl rand -hex 32)"}
 TASKOSAUR_JWT_REFRESH_SECRET=${TASKOSAUR_JWT_REFRESH_SECRET:-"$(openssl rand -hex 32)"}
 TASKOSAUR_ENCRYPTION_KEY=${TASKOSAUR_ENCRYPTION_KEY:-"$(openssl rand -hex 32)"}
+
+# Default Admin Credentials (from Taskosaur seeder)
+TASKOSAUR_ADMIN_EMAIL="admin@taskosaur.com"
+TASKOSAUR_ADMIN_PASSWORD="password123"
 
 # Container Root Password
 CT_ROOT_PASSWORD=${CT_ROOT_PASSWORD:-"taskosaur"}  # Root password for console access
@@ -292,8 +295,8 @@ install_dependencies() {
     progress "Updating package lists..."
     pct exec "$CT_ID" -- bash -c "apt-get update -qq" || cleanup_on_failure "apt-get update"
 
-    # Install required packages
-    progress "Installing Node.js 22, PostgreSQL, Redis, Nginx, and build tools..."
+    # Install required packages (no nginx needed)
+    progress "Installing Node.js 22, PostgreSQL, Redis, and build tools..."
     pct exec "$CT_ID" -- bash -c "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
         curl \
         ca-certificates \
@@ -302,8 +305,7 @@ install_dependencies() {
         git \
         postgresql \
         postgresql-contrib \
-        redis-server \
-        nginx" || cleanup_on_failure "dependency installation"
+        redis-server" || cleanup_on_failure "dependency installation"
 
     # Install Node.js 22
     progress "Installing Node.js 22..."
@@ -355,24 +357,26 @@ install_taskosaur() {
     # Get container IP for CORS configuration
     local CONTAINER_IP=$(get_container_ip)
 
-    # Create environment file using proper heredoc syntax
+    # Create environment file with direct port binding (no nginx proxy)
     progress "Creating environment configuration..."
-    pct exec "$CT_ID" -- bash -c "cat > /opt/taskosaur/.env" <<EOF
-DATABASE_URL="postgresql://taskosaur:${TASKOSAUR_DB_PASSWORD}@localhost:5432/taskosaur"
+    pct exec "$CT_ID" -- bash -c "cat > /opt/taskosaur/.env << EOF
+DATABASE_URL=\"postgresql://taskosaur:${TASKOSAUR_DB_PASSWORD}@localhost:5432/taskosaur\"
 NODE_ENV=production
-JWT_SECRET="${TASKOSAUR_JWT_SECRET}"
-JWT_REFRESH_SECRET="${TASKOSAUR_JWT_REFRESH_SECRET}"
-JWT_EXPIRES_IN="15m"
-JWT_REFRESH_EXPIRES_IN="7d"
-ENCRYPTION_KEY="${TASKOSAUR_ENCRYPTION_KEY}"
+PORT=${TASKOSAUR_BACKEND_PORT}
+HOST=0.0.0.0
+JWT_SECRET=\"${TASKOSAUR_JWT_SECRET}\"
+JWT_REFRESH_SECRET=\"${TASKOSAUR_JWT_REFRESH_SECRET}\"
+JWT_EXPIRES_IN=\"15m\"
+JWT_REFRESH_EXPIRES_IN=\"7d\"
+ENCRYPTION_KEY=\"${TASKOSAUR_ENCRYPTION_KEY}\"
 REDIS_HOST=localhost
 REDIS_PORT=6379
 FRONTEND_URL=http://${CONTAINER_IP}:${TASKOSAUR_FRONTEND_PORT}
-CORS_ORIGINS="http://${CONTAINER_IP}:${TASKOSAUR_FRONTEND_PORT},http://localhost:${TASKOSAUR_FRONTEND_PORT}"
-NEXT_PUBLIC_API_BASE_URL=/api
-UPLOAD_DEST="./uploads"
+CORS_ORIGINS=\"http://${CONTAINER_IP}:${TASKOSAUR_FRONTEND_PORT},http://localhost:${TASKOSAUR_FRONTEND_PORT}\"
+NEXT_PUBLIC_API_BASE_URL=http://${CONTAINER_IP}:${TASKOSAUR_BACKEND_PORT}/api
+UPLOAD_DEST=\"./uploads\"
 MAX_FILE_SIZE=10485760
-EOF
+EOF"
 
     # Verify .env file was created
     if ! pct exec "$CT_ID" -- bash -c "test -f /opt/taskosaur/.env"; then
@@ -407,16 +411,24 @@ EOF
         warn "Prisma client generation failed - continuing anyway"
     }
 
-    # Build application
+    # Build backend
     progress "Building Taskosaur backend (this will take 3-5 minutes)..."
     if ! pct exec "$CT_ID" -- bash -c "cd /opt/taskosaur && npm run build --workspace=backend 2>&1 | tail -20"; then
         error "Backend build failed - check Node.js version and dependencies"
         cleanup_on_failure "backend build"
     fi
 
-    # Copy .env to frontend directory for NEXT_PUBLIC_ variables
+    # Fix immutable import bug in RichTextEditor
+    progress "Fixing frontend compatibility issues..."
+    pct exec "$CT_ID" -- bash -c "sed -i 's/import Immutable from \"immutable\";/import * as Immutable from \"immutable\";/' /opt/taskosaur/frontend/src/components/common/RichTextEditor.tsx" || {
+        warn "Failed to fix immutable import - build may fail"
+    }
+
+    # Create frontend .env with correct API URL
     progress "Configuring frontend environment variables..."
-    pct exec "$CT_ID" -- bash -c "cp /opt/taskosaur/.env /opt/taskosaur/apps/frontend/.env.production.local"
+    pct exec "$CT_ID" -- bash -c "cat > /opt/taskosaur/frontend/.env.production.local << EOF
+NEXT_PUBLIC_API_BASE_URL=http://${CONTAINER_IP}:${TASKOSAUR_BACKEND_PORT}/api
+EOF"
 
     progress "Building Taskosaur frontend (this will take 5-10 minutes)..."
     if ! pct exec "$CT_ID" -- bash -c "cd /opt/taskosaur && npm run build --workspace=frontend 2>&1 | tail -20"; then
@@ -441,76 +453,14 @@ EOF
     success "Taskosaur installed successfully"
 }
 
-configure_nginx() {
-    info "Configuring Nginx reverse proxy..."
-
-    # Create Nginx configuration
-    pct exec "$CT_ID" -- bash -c "cat > /etc/nginx/sites-available/taskosaur" <<EOF
-server {
-    listen ${TASKOSAUR_FRONTEND_PORT};
-    server_name _;
-
-    # Increase buffer sizes for large headers
-    client_max_body_size 10M;
-    proxy_buffer_size 128k;
-    proxy_buffers 4 256k;
-    proxy_busy_buffers_size 256k;
-
-    # Frontend static files
-    location / {
-        proxy_pass http://127.0.0.1:${TASKOSAUR_FRONTEND_INTERNAL_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-
-    # Backend API proxy
-    location /api {
-        proxy_pass http://127.0.0.1:${TASKOSAUR_BACKEND_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_cache_bypass \$http_upgrade;
-
-        # CORS headers (if needed for external domains)
-        add_header Access-Control-Allow-Origin \$http_origin always;
-        add_header Access-Control-Allow-Credentials true always;
-        add_header Access-Control-Allow-Methods 'GET, POST, PUT, DELETE, PATCH, OPTIONS' always;
-        add_header Access-Control-Allow-Headers 'Accept,Authorization,Cache-Control,Content-Type,DNT,If-Modified-Since,Keep-Alive,Origin,User-Agent,X-Requested-With' always;
-
-        if (\$request_method = OPTIONS) {
-            return 204;
-        }
-    }
-}
-EOF
-
-    # Enable site and remove default
-    pct exec "$CT_ID" -- bash -c "ln -sf /etc/nginx/sites-available/taskosaur /etc/nginx/sites-enabled/taskosaur"
-    pct exec "$CT_ID" -- bash -c "rm -f /etc/nginx/sites-enabled/default"
-
-    # Test and reload Nginx
-    pct exec "$CT_ID" -- bash -c "nginx -t" || cleanup_on_failure "nginx configuration test"
-    pct exec "$CT_ID" -- bash -c "systemctl enable nginx"
-    pct exec "$CT_ID" -- bash -c "systemctl restart nginx"
-
-    success "Nginx configured successfully"
-}
-
 configure_services() {
-    info "Configuring systemd services with auto-restart..."
+    info "Configuring systemd services..."
 
-    # Create backend service with aggressive restart policy
-    pct exec "$CT_ID" -- bash -c "cat > /etc/systemd/system/taskosaur-backend.service" <<'EOF'
+    # Get container IP for service configuration
+    local CONTAINER_IP=$(pct exec "$CT_ID" -- hostname -I 2>/dev/null | awk '{print $1}')
+
+    # Create backend service - binds to 0.0.0.0 for external access
+    pct exec "$CT_ID" -- bash -c "cat > /etc/systemd/system/taskosaur-backend.service << EOF
 [Unit]
 Description=Taskosaur Backend API
 After=network.target postgresql.service redis-server.service
@@ -532,10 +482,10 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-EOF
+EOF"
 
-    # Create frontend service with aggressive restart policy
-    pct exec "$CT_ID" -- bash -c "cat > /etc/systemd/system/taskosaur-frontend.service" <<'EOF'
+    # Create frontend service - binds to 0.0.0.0 for external access
+    pct exec "$CT_ID" -- bash -c "cat > /etc/systemd/system/taskosaur-frontend.service << EOF
 [Unit]
 Description=Taskosaur Frontend
 After=network.target taskosaur-backend.service
@@ -546,10 +496,9 @@ StartLimitBurst=5
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/taskosaur/apps/frontend
-EnvironmentFile=/opt/taskosaur/.env
+WorkingDirectory=/opt/taskosaur/frontend
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/serve out -l 3002
+ExecStart=/usr/bin/serve out -l tcp://0.0.0.0:${TASKOSAUR_FRONTEND_PORT}
 Restart=always
 RestartSec=10s
 StandardOutput=journal
@@ -557,7 +506,7 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-EOF
+EOF"
 
     # Reload systemd and enable services
     pct exec "$CT_ID" -- bash -c "systemctl daemon-reload" || cleanup_on_failure "systemd reload"
@@ -584,7 +533,7 @@ EOF
     }
 
     # Wait for frontend to start
-    sleep 10
+    sleep 5
 
     # Check service status with detailed feedback
     local backend_status
@@ -641,12 +590,20 @@ Disk Size:       ${CT_DISK_SIZE}GB
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Frontend:        http://${container_ip}:${TASKOSAUR_FRONTEND_PORT}
 Backend API:     http://${container_ip}:${TASKOSAUR_BACKEND_PORT}/api
-API Docs:        http://${container_ip}:${TASKOSAUR_BACKEND_PORT}/api/docs
+API Health:      http://${container_ip}:${TASKOSAUR_BACKEND_PORT}/api/health
 
-🔑 CREDENTIALS
+🔑 DEFAULT ADMIN CREDENTIALS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Database:        taskosaur / ${TASKOSAUR_DB_PASSWORD}
-Check admin:     pct exec ${CT_ID} -- cat /opt/taskosaur/README.md
+Email:           ${TASKOSAUR_ADMIN_EMAIL}
+Password:        ${TASKOSAUR_ADMIN_PASSWORD}
+
+⚠️  IMPORTANT: Change the admin password after first login!
+
+🗄️ DATABASE CREDENTIALS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Database:        taskosaur
+DB User:         taskosaur
+DB Password:     ${TASKOSAUR_DB_PASSWORD}
 
 🔧 SERVICE MANAGEMENT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -655,12 +612,6 @@ Frontend Status: pct exec ${CT_ID} -- systemctl status taskosaur-frontend
 Restart All:     pct exec ${CT_ID} -- systemctl restart taskosaur-backend taskosaur-frontend
 Backend Logs:    pct exec ${CT_ID} -- journalctl -u taskosaur-backend -f
 Frontend Logs:   pct exec ${CT_ID} -- journalctl -u taskosaur-frontend -f
-
-🗄️ DATABASE MANAGEMENT
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PostgreSQL:      pct exec ${CT_ID} -- systemctl status postgresql
-Redis:           pct exec ${CT_ID} -- systemctl status redis-server
-DB Connect:      pct exec ${CT_ID} -- su - postgres -c "psql -d taskosaur"
 
 📦 CONTAINER MANAGEMENT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -703,58 +654,52 @@ display_info() {
     success "Taskosaur LXC Container Setup Complete!"
     echo "================================================================="
     echo ""
-    info "💡 All access information has been saved to container Notes"
-    info "   View in Proxmox UI: Select container → Summary → Notes"
+    info "All access information has been saved to container Notes"
+    info "View in Proxmox UI: Select container -> Summary -> Notes"
     echo ""
     echo "Container Details:"
-    echo "  • Container ID:      $CT_ID"
-    echo "  • Hostname:          $CT_HOSTNAME"
-    echo "  • IP Address:        $container_ip"
-    echo "  • Root Password:     ${CT_ROOT_PASSWORD}"
-    echo "  • CPU Cores:         $CT_CORES"
-    echo "  • Memory:            ${CT_MEMORY}MB"
-    echo "  • Disk Size:         ${CT_DISK_SIZE}GB"
+    echo "  - Container ID:      $CT_ID"
+    echo "  - Hostname:          $CT_HOSTNAME"
+    echo "  - IP Address:        $container_ip"
+    echo "  - Root Password:     ${CT_ROOT_PASSWORD}"
+    echo "  - CPU Cores:         $CT_CORES"
+    echo "  - Memory:            ${CT_MEMORY}MB"
+    echo "  - Disk Size:         ${CT_DISK_SIZE}GB"
     echo ""
     echo "Taskosaur Access:"
-    echo "  • Frontend:          http://${container_ip}:${TASKOSAUR_FRONTEND_PORT}"
-    echo "  • Backend API:       http://${container_ip}:${TASKOSAUR_BACKEND_PORT}/api"
-    echo "  • API Docs:          http://${container_ip}:${TASKOSAUR_BACKEND_PORT}/api/docs"
+    echo "  - Frontend:          http://${container_ip}:${TASKOSAUR_FRONTEND_PORT}"
+    echo "  - Backend API:       http://${container_ip}:${TASKOSAUR_BACKEND_PORT}/api"
+    echo "  - API Health:        http://${container_ip}:${TASKOSAUR_BACKEND_PORT}/api/health"
     echo ""
     echo "Default Admin Account:"
-    echo "  • Email:             admin@taskosaur.com"
-    echo "  • Password:          Check logs or reset via backend"
-    echo "  • Organization:      Default Organization"
+    echo "  - Email:             ${TASKOSAUR_ADMIN_EMAIL}"
+    echo "  - Password:          ${TASKOSAUR_ADMIN_PASSWORD}"
+    echo ""
+    warn "IMPORTANT: Change the admin password after first login!"
     echo ""
     echo "Database Credentials:"
-    echo "  • Database:          taskosaur"
-    echo "  • Username:          taskosaur"
-    echo "  • Password:          ${TASKOSAUR_DB_PASSWORD}"
-    echo ""
-    echo "CORS Configuration:"
-    echo "  • Allowed Origins:   http://${container_ip}:${TASKOSAUR_FRONTEND_PORT}"
-    echo "  • Add more domains:  Edit /opt/taskosaur/.env and update CORS_ORIGINS"
-    echo "  • Format:            CORS_ORIGINS=\"http://domain1.com,https://domain2.com\""
-    echo "  • Then restart:      pct exec $CT_ID -- systemctl restart taskosaur-backend"
+    echo "  - Database:          taskosaur"
+    echo "  - Username:          taskosaur"
+    echo "  - Password:          ${TASKOSAUR_DB_PASSWORD}"
     echo ""
     echo "Service Management:"
-    echo "  • Backend Status:    pct exec $CT_ID -- systemctl status taskosaur-backend"
-    echo "  • Frontend Status:   pct exec $CT_ID -- systemctl status taskosaur-frontend"
-    echo "  • Restart Services:  pct exec $CT_ID -- systemctl restart taskosaur-backend taskosaur-frontend"
+    echo "  - Backend Status:    pct exec $CT_ID -- systemctl status taskosaur-backend"
+    echo "  - Frontend Status:   pct exec $CT_ID -- systemctl status taskosaur-frontend"
+    echo "  - Restart Services:  pct exec $CT_ID -- systemctl restart taskosaur-backend taskosaur-frontend"
     echo ""
     echo "Container Management:"
-    echo "  • Enter container:   pct enter $CT_ID"
-    echo "  • Stop container:    pct stop $CT_ID"
-    echo "  • Start container:   pct start $CT_ID"
+    echo "  - Enter container:   pct enter $CT_ID"
+    echo "  - Stop container:    pct stop $CT_ID"
+    echo "  - Start container:   pct start $CT_ID"
     echo ""
-    echo "Next Steps:"
-    echo "  1. Open http://${container_ip}:${TASKOSAUR_FRONTEND_PORT} in your browser"
-    echo "  2. Check README for default admin credentials"
-    echo "  3. Configure your AI API keys in the settings"
+    echo "Reverse Proxy Setup (optional):"
+    echo "  - Frontend is directly accessible at ${container_ip}:${TASKOSAUR_FRONTEND_PORT}"
+    echo "  - Backend API is directly accessible at ${container_ip}:${TASKOSAUR_BACKEND_PORT}"
+    echo "  - Configure your reverse proxy (Traefik, Caddy, etc.) to point to these ports"
     echo ""
     echo "Troubleshooting:"
-    echo "  • Check backend logs:  pct exec $CT_ID -- journalctl -u taskosaur-backend -f"
-    echo "  • Check frontend logs: pct exec $CT_ID -- journalctl -u taskosaur-frontend -f"
-    echo "  • Restart services:    pct exec $CT_ID -- systemctl restart taskosaur-backend taskosaur-frontend"
+    echo "  - Check backend logs:  pct exec $CT_ID -- journalctl -u taskosaur-backend -f"
+    echo "  - Check frontend logs: pct exec $CT_ID -- journalctl -u taskosaur-frontend -f"
     echo ""
     echo "================================================================="
 }
@@ -792,7 +737,6 @@ main() {
     # Install and configure Taskosaur
     info "Installing Taskosaur application..."
     install_taskosaur
-    configure_nginx
     configure_services
 
     # Add container notes
