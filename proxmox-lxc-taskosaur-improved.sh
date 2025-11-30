@@ -36,8 +36,9 @@ DEBIAN_VERSION="12"                                     # Debian version
 TEMPLATE_NAME=""                                        # Auto-detected
 
 # Taskosaur Configuration
-TASKOSAUR_FRONTEND_PORT=${TASKOSAUR_FRONTEND_PORT:-3001}  # Frontend port
-TASKOSAUR_BACKEND_PORT=${TASKOSAUR_BACKEND_PORT:-3000}    # Backend API port
+TASKOSAUR_FRONTEND_PORT=${TASKOSAUR_FRONTEND_PORT:-3000}  # Frontend port (main access)
+TASKOSAUR_BACKEND_PORT=${TASKOSAUR_BACKEND_PORT:-3001}    # Backend API port
+TASKOSAUR_FRONTEND_INTERNAL_PORT=3002                      # Frontend internal port (behind Nginx)
 TASKOSAUR_DB_PASSWORD=${TASKOSAUR_DB_PASSWORD:-"taskosaur_$(openssl rand -hex 8)"}
 TASKOSAUR_JWT_SECRET=${TASKOSAUR_JWT_SECRET:-"$(openssl rand -hex 32)"}
 TASKOSAUR_JWT_REFRESH_SECRET=${TASKOSAUR_JWT_REFRESH_SECRET:-"$(openssl rand -hex 32)"}
@@ -227,6 +228,30 @@ start_container() {
     success "Container started successfully"
 }
 
+get_container_ip() {
+    local ip=""
+    local max_attempts=30
+    local attempt=0
+
+    progress "Detecting container IP address..."
+
+    while [[ -z "$ip" && $attempt -lt $max_attempts ]]; do
+        ip=$(pct exec "$CT_ID" -- hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+        if [[ -z "$ip" ]]; then
+            sleep 1
+            attempt=$((attempt + 1))
+        fi
+    done
+
+    if [[ -z "$ip" ]]; then
+        warn "Could not auto-detect IP, using localhost"
+        echo "localhost"
+    else
+        success "Container IP: $ip"
+        echo "$ip"
+    fi
+}
+
 #################################################################
 # Taskosaur Installation Functions
 #################################################################
@@ -298,6 +323,9 @@ install_taskosaur() {
     progress "Cloning Taskosaur repository..."
     pct exec "$CT_ID" -- bash -c "cd /opt && git clone https://github.com/Taskosaur/Taskosaur.git taskosaur" || cleanup_on_failure "repository clone"
 
+    # Get container IP for CORS configuration
+    local CONTAINER_IP=$(get_container_ip)
+
     # Create environment file using proper heredoc syntax
     progress "Creating environment configuration..."
     pct exec "$CT_ID" -- bash -c "cat > /opt/taskosaur/.env" <<EOF
@@ -310,8 +338,8 @@ JWT_REFRESH_EXPIRES_IN="7d"
 ENCRYPTION_KEY="${TASKOSAUR_ENCRYPTION_KEY}"
 REDIS_HOST=localhost
 REDIS_PORT=6379
-FRONTEND_URL=http://0.0.0.0:${TASKOSAUR_FRONTEND_PORT}
-CORS_ORIGIN="http://0.0.0.0:${TASKOSAUR_FRONTEND_PORT}"
+FRONTEND_URL=http://${CONTAINER_IP}:${TASKOSAUR_FRONTEND_PORT}
+CORS_ORIGINS="http://${CONTAINER_IP}:${TASKOSAUR_FRONTEND_PORT},http://localhost:${TASKOSAUR_FRONTEND_PORT}"
 NEXT_PUBLIC_API_BASE_URL=/api
 UPLOAD_DEST="./uploads"
 MAX_FILE_SIZE=10485760
@@ -393,14 +421,23 @@ server {
     listen ${TASKOSAUR_FRONTEND_PORT};
     server_name _;
 
+    # Increase buffer sizes for large headers
+    client_max_body_size 10M;
+    proxy_buffer_size 128k;
+    proxy_buffers 4 256k;
+    proxy_busy_buffers_size 256k;
+
     # Frontend static files
     location / {
-        proxy_pass http://127.0.0.1:3002;
+        proxy_pass http://127.0.0.1:${TASKOSAUR_FRONTEND_INTERNAL_PORT};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
     # Backend API proxy
@@ -414,6 +451,16 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_cache_bypass \$http_upgrade;
+
+        # CORS headers (if needed for external domains)
+        add_header Access-Control-Allow-Origin \$http_origin always;
+        add_header Access-Control-Allow-Credentials true always;
+        add_header Access-Control-Allow-Methods 'GET, POST, PUT, DELETE, PATCH, OPTIONS' always;
+        add_header Access-Control-Allow-Headers 'Accept,Authorization,Cache-Control,Content-Type,DNT,If-Modified-Since,Keep-Alive,Origin,User-Agent,X-Requested-With' always;
+
+        if (\$request_method = OPTIONS) {
+            return 204;
+        }
     }
 }
 EOF
@@ -439,6 +486,8 @@ configure_services() {
 Description=Taskosaur Backend API
 After=network.target postgresql.service redis-server.service
 Wants=postgresql.service redis-server.service
+StartLimitIntervalSec=30s
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -449,8 +498,6 @@ Environment=NODE_ENV=production
 ExecStart=/usr/bin/npm run start:prod --workspace=backend
 Restart=always
 RestartSec=10s
-StartLimitBurst=5
-StartLimitIntervalSec=30s
 StandardOutput=journal
 StandardError=journal
 
@@ -464,6 +511,8 @@ EOF
 Description=Taskosaur Frontend
 After=network.target taskosaur-backend.service
 Wants=taskosaur-backend.service
+StartLimitIntervalSec=30s
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -474,8 +523,6 @@ Environment=NODE_ENV=production
 ExecStart=/usr/bin/serve out -l 3002
 Restart=always
 RestartSec=10s
-StartLimitBurst=5
-StartLimitIntervalSec=30s
 StandardOutput=journal
 StandardError=journal
 
@@ -643,10 +690,21 @@ display_info() {
     echo "  • Backend API:       http://${container_ip}:${TASKOSAUR_BACKEND_PORT}/api"
     echo "  • API Docs:          http://${container_ip}:${TASKOSAUR_BACKEND_PORT}/api/docs"
     echo ""
+    echo "Default Admin Account:"
+    echo "  • Email:             admin@taskosaur.com"
+    echo "  • Password:          Check logs or reset via backend"
+    echo "  • Organization:      Default Organization"
+    echo ""
     echo "Database Credentials:"
     echo "  • Database:          taskosaur"
     echo "  • Username:          taskosaur"
     echo "  • Password:          ${TASKOSAUR_DB_PASSWORD}"
+    echo ""
+    echo "CORS Configuration:"
+    echo "  • Allowed Origins:   http://${container_ip}:${TASKOSAUR_FRONTEND_PORT}"
+    echo "  • Add more domains:  Edit /opt/taskosaur/.env and update CORS_ORIGINS"
+    echo "  • Format:            CORS_ORIGINS=\"http://domain1.com,https://domain2.com\""
+    echo "  • Then restart:      pct exec $CT_ID -- systemctl restart taskosaur-backend"
     echo ""
     echo "Service Management:"
     echo "  • Backend Status:    pct exec $CT_ID -- systemctl status taskosaur-backend"
