@@ -328,6 +328,13 @@ EOF
         error "npm install failed - check if Taskosaur repository is accessible"
         cleanup_on_failure "npm install"
     fi
+
+    # Install missing immutable package for frontend
+    progress "Installing missing frontend dependencies..."
+    pct exec "$CT_ID" -- bash -c "cd /opt/taskosaur && npm install immutable --workspace=frontend --legacy-peer-deps" || {
+        warn "Failed to install immutable package - continuing anyway"
+    }
+
     success "npm dependencies installed"
 
     # Run database migrations
@@ -343,11 +350,24 @@ EOF
     }
 
     # Build application
-    progress "Building Taskosaur (this will take 5-10 minutes)..."
-    if ! pct exec "$CT_ID" -- bash -c "cd /opt/taskosaur && npm run build 2>&1 | tail -20"; then
-        error "Build failed - check Node.js version and dependencies"
-        cleanup_on_failure "application build"
+    progress "Building Taskosaur backend (this will take 3-5 minutes)..."
+    if ! pct exec "$CT_ID" -- bash -c "cd /opt/taskosaur && npm run build --workspace=backend 2>&1 | tail -20"; then
+        error "Backend build failed - check Node.js version and dependencies"
+        cleanup_on_failure "backend build"
     fi
+
+    progress "Building Taskosaur frontend (this will take 5-10 minutes)..."
+    if ! pct exec "$CT_ID" -- bash -c "cd /opt/taskosaur && npm run build --workspace=frontend 2>&1 | tail -20"; then
+        error "Frontend build failed - check Node.js version and dependencies"
+        cleanup_on_failure "frontend build"
+    fi
+
+    # Install serve package globally for serving static frontend
+    progress "Installing serve package for static file serving..."
+    pct exec "$CT_ID" -- bash -c "npm install -g serve" || {
+        warn "Failed to install serve package"
+    }
+
     success "Taskosaur built successfully"
 
     # Seed database with admin user
@@ -373,6 +393,7 @@ Wants=postgresql.service redis-server.service
 Type=simple
 User=root
 WorkingDirectory=/opt/taskosaur
+EnvironmentFile=/opt/taskosaur/.env
 Environment=NODE_ENV=production
 ExecStart=/usr/bin/npm run start:prod --workspace=backend
 Restart=always
@@ -396,9 +417,10 @@ Wants=taskosaur-backend.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/taskosaur
+WorkingDirectory=/opt/taskosaur/apps/frontend
+EnvironmentFile=/opt/taskosaur/.env
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/npm run start --workspace=frontend
+ExecStart=/usr/bin/serve out -l ${TASKOSAUR_FRONTEND_PORT}
 Restart=always
 RestartSec=10s
 StartLimitBurst=5
