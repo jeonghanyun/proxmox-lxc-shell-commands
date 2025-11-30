@@ -2,10 +2,10 @@
 
 # Proxmox LXC Mailpit Installation Script
 # Description: Automated creation and configuration of Mailpit email testing server in LXC container
-# OS: Debian 12 (Bookworm)
+# OS: Debian 12 (Bookworm) - Auto-detected latest version
 # Mailpit Ports: SMTP 1025, Web UI 8025
-# Author: Auto-generated script
-# Date: 2025-11-30
+# Repository: https://github.com/jeonghanyun/proxmox-lxc-shell-commands
+# Last Updated: 2025-11-30
 
 set -euo pipefail
 

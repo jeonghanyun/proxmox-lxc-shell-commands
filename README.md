@@ -53,6 +53,12 @@ CT_GATEWAY=""                # Gateway for static IP
 bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh)
 ```
 
+**If experiencing cache issues, use this version:**
+```bash
+wget -O /tmp/mailpit.sh "https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh?$(date +%s)"
+bash /tmp/mailpit.sh
+```
+
 ### Method 2: One-Line with Custom Settings
 ```bash
 CT_ID=250 CT_MEMORY=1024 CT_IP="192.168.1.100/24" CT_GATEWAY="192.168.1.1" \
