@@ -239,7 +239,7 @@ install_dependencies() {
     pct exec "$CT_ID" -- bash -c "apt-get update -qq" || cleanup_on_failure "apt-get update"
 
     # Install required packages
-    progress "Installing Node.js 22, PostgreSQL, Redis, and build tools..."
+    progress "Installing Node.js 22, PostgreSQL, Redis, Nginx, and build tools..."
     pct exec "$CT_ID" -- bash -c "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
         curl \
         ca-certificates \
@@ -248,7 +248,8 @@ install_dependencies() {
         git \
         postgresql \
         postgresql-contrib \
-        redis-server" || cleanup_on_failure "dependency installation"
+        redis-server \
+        nginx" || cleanup_on_failure "dependency installation"
 
     # Install Node.js 22
     progress "Installing Node.js 22..."
@@ -311,7 +312,7 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 FRONTEND_URL=http://0.0.0.0:${TASKOSAUR_FRONTEND_PORT}
 CORS_ORIGIN="http://0.0.0.0:${TASKOSAUR_FRONTEND_PORT}"
-NEXT_PUBLIC_API_BASE_URL=http://0.0.0.0:${TASKOSAUR_BACKEND_PORT}/api
+NEXT_PUBLIC_API_BASE_URL=/api
 UPLOAD_DEST="./uploads"
 MAX_FILE_SIZE=10485760
 EOF
@@ -379,6 +380,52 @@ EOF
     success "Taskosaur installed successfully"
 }
 
+configure_nginx() {
+    info "Configuring Nginx reverse proxy..."
+
+    # Create Nginx configuration
+    pct exec "$CT_ID" -- bash -c "cat > /etc/nginx/sites-available/taskosaur" <<EOF
+server {
+    listen ${TASKOSAUR_FRONTEND_PORT};
+    server_name _;
+
+    # Frontend static files
+    location / {
+        proxy_pass http://127.0.0.1:3002;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+
+    # Backend API proxy
+    location /api {
+        proxy_pass http://127.0.0.1:${TASKOSAUR_BACKEND_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOF
+
+    # Enable site and remove default
+    pct exec "$CT_ID" -- bash -c "ln -sf /etc/nginx/sites-available/taskosaur /etc/nginx/sites-enabled/taskosaur"
+    pct exec "$CT_ID" -- bash -c "rm -f /etc/nginx/sites-enabled/default"
+
+    # Test and reload Nginx
+    pct exec "$CT_ID" -- bash -c "nginx -t" || cleanup_on_failure "nginx configuration test"
+    pct exec "$CT_ID" -- bash -c "systemctl enable nginx"
+    pct exec "$CT_ID" -- bash -c "systemctl restart nginx"
+
+    success "Nginx configured successfully"
+}
+
 configure_services() {
     info "Configuring systemd services with auto-restart..."
 
@@ -420,7 +467,7 @@ User=root
 WorkingDirectory=/opt/taskosaur/apps/frontend
 EnvironmentFile=/opt/taskosaur/.env
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/serve out -l ${TASKOSAUR_FRONTEND_PORT}
+ExecStart=/usr/bin/serve out -l 3002
 Restart=always
 RestartSec=10s
 StartLimitBurst=5
@@ -652,6 +699,7 @@ main() {
     # Install and configure Taskosaur
     info "Installing Taskosaur application..."
     install_taskosaur
+    configure_nginx
     configure_services
 
     # Add container notes
