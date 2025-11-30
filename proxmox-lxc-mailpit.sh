@@ -99,15 +99,25 @@ check_container_exists() {
 }
 
 detect_and_download_template() {
+    info "Updating template database..."
+
+    # Update template list first (best practice)
+    if ! pveam update 2>&1 | grep -q "update successful\|already up to date"; then
+        warn "Template database update encountered issues, continuing anyway..."
+    fi
+
     info "Detecting available Debian ${DEBIAN_VERSION} template..."
 
     # Get latest Debian template for the specified version
     local available_template
-    available_template=$(pveam available | grep "debian-${DEBIAN_VERSION}" | grep "standard" | tail -1 | awk '{print $2}')
+    available_template=$(pveam available --section system 2>/dev/null | grep "debian-${DEBIAN_VERSION}" | grep "standard" | tail -1 | awk '{print $2}')
 
     if [[ -z "$available_template" ]]; then
         error "No Debian ${DEBIAN_VERSION} template found in available templates"
-        info "Try: pveam available | grep debian"
+        info "Troubleshooting steps:"
+        info "  1. Check DNS configuration: cat /etc/resolv.conf"
+        info "  2. Test connectivity: ping -c 3 download.proxmox.com"
+        info "  3. Manual check: pveam available --section system | grep debian"
         exit 1
     fi
 
@@ -115,18 +125,21 @@ detect_and_download_template() {
     info "Found template: $TEMPLATE_NAME"
 
     # Check if already downloaded
-    if pveam list "$TEMPLATE_STORAGE" | grep -q "$TEMPLATE_NAME"; then
+    if pveam list "$TEMPLATE_STORAGE" 2>/dev/null | grep -q "$TEMPLATE_NAME"; then
         success "Template already downloaded"
         return 0
     fi
 
     # Download template
-    warn "Downloading Debian template..."
-    if pveam download "$TEMPLATE_STORAGE" "$TEMPLATE_NAME"; then
+    warn "Downloading Debian template (this may take a few minutes)..."
+    if pveam download "$TEMPLATE_STORAGE" "$TEMPLATE_NAME" 2>&1; then
         success "Template downloaded successfully"
     else
         error "Failed to download template"
-        info "Please check your internet connection and storage permissions"
+        info "Common fixes:"
+        info "  1. Add DNS server: echo 'nameserver 8.8.8.8' >> /etc/resolv.conf"
+        info "  2. Check internet: curl -I https://download.proxmox.com"
+        info "  3. Check storage: df -h"
         exit 1
     fi
 }
