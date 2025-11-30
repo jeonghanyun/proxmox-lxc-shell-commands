@@ -273,9 +273,9 @@ setup_database() {
 
     # Create database and user
     progress "Creating database and user..."
-    pct exec "$CT_ID" -- bash -c "sudo -u postgres psql -c \"CREATE USER taskosaur WITH PASSWORD '${TASKOSAUR_DB_PASSWORD}';\"" || cleanup_on_failure "database user creation"
-    pct exec "$CT_ID" -- bash -c "sudo -u postgres psql -c \"CREATE DATABASE taskosaur OWNER taskosaur;\"" || cleanup_on_failure "database creation"
-    pct exec "$CT_ID" -- bash -c "sudo -u postgres psql -c \"GRANT ALL PRIVILEGES ON DATABASE taskosaur TO taskosaur;\"" || cleanup_on_failure "database privileges"
+    pct exec "$CT_ID" -- bash -c "su - postgres -c \"psql -c \\\"CREATE USER taskosaur WITH PASSWORD '${TASKOSAUR_DB_PASSWORD}';\\\"\"" || cleanup_on_failure "database user creation"
+    pct exec "$CT_ID" -- bash -c "su - postgres -c \"psql -c \\\"CREATE DATABASE taskosaur OWNER taskosaur;\\\"\"" || cleanup_on_failure "database creation"
+    pct exec "$CT_ID" -- bash -c "su - postgres -c \"psql -c \\\"GRANT ALL PRIVILEGES ON DATABASE taskosaur TO taskosaur;\\\"\"" || cleanup_on_failure "database privileges"
 
     success "PostgreSQL database configured"
 }
@@ -511,7 +511,7 @@ Frontend Logs:   pct exec ${CT_ID} -- journalctl -u taskosaur-frontend -f
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PostgreSQL:      pct exec ${CT_ID} -- systemctl status postgresql
 Redis:           pct exec ${CT_ID} -- systemctl status redis-server
-DB Connect:      pct exec ${CT_ID} -- sudo -u postgres psql -d taskosaur
+DB Connect:      pct exec ${CT_ID} -- su - postgres -c "psql -d taskosaur"
 
 📦 CONTAINER MANAGEMENT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
