@@ -20,10 +20,10 @@ Automatically creates and configures a Mailpit email testing server in a Debian 
 **Quick Start**:
 ```bash
 # Download and run
-curl -sL https://raw.githubusercontent.com/YOUR_USERNAME/proxmox-lxc-shell-commands/main/proxmox-lxc-mailpit.sh | bash
+curl -sL https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh | bash
 
 # Or with custom settings
-curl -sL https://raw.githubusercontent.com/YOUR_USERNAME/proxmox-lxc-shell-commands/main/proxmox-lxc-mailpit.sh -o mailpit.sh
+curl -sL https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh -o mailpit.sh
 chmod +x mailpit.sh
 CT_ID=250 CT_MEMORY=1024 ./mailpit.sh
 ```
@@ -49,12 +49,12 @@ CT_GATEWAY=""                # Gateway for static IP
 
 ### Method 1: Direct Download and Execute
 ```bash
-curl -sL https://raw.githubusercontent.com/YOUR_USERNAME/proxmox-lxc-shell-commands/main/proxmox-lxc-mailpit.sh | bash
+curl -sL https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh | bash
 ```
 
 ### Method 2: Clone Repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/proxmox-lxc-shell-commands.git
+git clone https://github.com/jeonghanyun/proxmox-lxc-shell-commands.git
 cd proxmox-lxc-shell-commands
 chmod +x *.sh
 ./proxmox-lxc-mailpit.sh
@@ -62,7 +62,7 @@ chmod +x *.sh
 
 ### Method 3: wget
 ```bash
-wget https://raw.githubusercontent.com/YOUR_USERNAME/proxmox-lxc-shell-commands/main/proxmox-lxc-mailpit.sh
+wget https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh
 chmod +x proxmox-lxc-mailpit.sh
 ./proxmox-lxc-mailpit.sh
 ```
