@@ -44,6 +44,9 @@ TASKOSAUR_JWT_SECRET=${TASKOSAUR_JWT_SECRET:-"$(openssl rand -hex 32)"}
 TASKOSAUR_JWT_REFRESH_SECRET=${TASKOSAUR_JWT_REFRESH_SECRET:-"$(openssl rand -hex 32)"}
 TASKOSAUR_ENCRYPTION_KEY=${TASKOSAUR_ENCRYPTION_KEY:-"$(openssl rand -hex 32)"}
 
+# Container Root Password
+CT_ROOT_PASSWORD=${CT_ROOT_PASSWORD:-"taskosaur"}  # Root password for console access
+
 # Container Options
 CT_ONBOOT=${CT_ONBOOT:-1}                              # Start on boot (1=yes, 0=no)
 CT_UNPRIVILEGED=${CT_UNPRIVILEGED:-1}                  # Unprivileged container (1=yes, 0=no)
@@ -224,6 +227,12 @@ start_container() {
             cleanup_on_failure "container boot"
         fi
     done
+
+    # Set root password for console access
+    progress "Setting root password for console access..."
+    pct exec "$CT_ID" -- bash -c "echo 'root:${CT_ROOT_PASSWORD}' | chpasswd" || {
+        warn "Failed to set root password - you may need to set it manually"
+    }
 
     success "Container started successfully"
 }
@@ -681,6 +690,7 @@ display_info() {
     echo "  • Container ID:      $CT_ID"
     echo "  • Hostname:          $CT_HOSTNAME"
     echo "  • IP Address:        $container_ip"
+    echo "  • Root Password:     ${CT_ROOT_PASSWORD}"
     echo "  • CPU Cores:         $CT_CORES"
     echo "  • Memory:            ${CT_MEMORY}MB"
     echo "  • Disk Size:         ${CT_DISK_SIZE}GB"
