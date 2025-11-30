@@ -18,16 +18,13 @@ Automatically creates and configures Nextcloud 32.0.1 with PHP 8.3, MariaDB, and
 - 🔐 Auto-generated secure passwords
 - 📝 Complete with OCC command setup
 
-**Quick Start**:
+**Installation**:
 ```bash
-# One-line installation (recommended)
+# Basic installation
 bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-nextcloud.sh)
 
 # With custom settings
 CT_ID=300 CT_MEMORY=4096 bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-nextcloud.sh)
-
-# Alternative: Download and run
-curl -sL https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-nextcloud.sh | bash
 ```
 
 **Customization**:
@@ -57,16 +54,13 @@ Automatically creates and configures a Mailpit email testing server in a Debian 
 - 🔧 Systemd service auto-configuration
 - 💾 Minimal resource usage (512MB RAM, 4GB disk)
 
-**Quick Start**:
+**Installation**:
 ```bash
-# One-line installation (recommended)
+# Basic installation
 bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh)
 
 # With custom settings
 CT_ID=250 CT_MEMORY=1024 bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh)
-
-# Alternative: Download and run
-curl -sL https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh | bash
 ```
 
 **Customization**:
@@ -85,44 +79,6 @@ CT_GATEWAY=""                # Gateway for static IP
 - Proxmox VE 9.1+ (or compatible versions)
 - Root access on Proxmox host
 - Internet connection for template/software downloads
-
-## 📖 Usage
-
-### Method 1: One-Line Installation (Recommended)
-```bash
-bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh)
-```
-
-**If experiencing cache issues, use this version:**
-```bash
-wget -O /tmp/mailpit.sh "https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh?$(date +%s)"
-bash /tmp/mailpit.sh
-```
-
-### Method 2: One-Line with Custom Settings
-```bash
-CT_ID=250 CT_MEMORY=1024 CT_IP="192.168.1.100/24" CT_GATEWAY="192.168.1.1" \
-bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh)
-```
-
-### Method 3: Clone Repository
-```bash
-git clone https://github.com/jeonghanyun/proxmox-lxc-shell-commands.git
-cd proxmox-lxc-shell-commands
-./proxmox-lxc-mailpit.sh
-```
-
-### Method 4: wget
-```bash
-wget https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh
-chmod +x proxmox-lxc-mailpit.sh
-./proxmox-lxc-mailpit.sh
-```
-
-## 🎯 Tested On
-
-- Proxmox VE 9.1.1
-- Debian 12 (Bookworm) LXC templates
 
 ## 🤝 Contributing
 
