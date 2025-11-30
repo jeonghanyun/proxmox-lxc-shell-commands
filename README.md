@@ -19,13 +19,14 @@ Automatically creates and configures a Mailpit email testing server in a Debian 
 
 **Quick Start**:
 ```bash
-# Download and run
-curl -sL https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh | bash
+# One-line installation (recommended)
+bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh)
 
-# Or with custom settings
-curl -sL https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh -o mailpit.sh
-chmod +x mailpit.sh
-CT_ID=250 CT_MEMORY=1024 ./mailpit.sh
+# With custom settings
+CT_ID=250 CT_MEMORY=1024 bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh)
+
+# Alternative: Download and run
+curl -sL https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh | bash
 ```
 
 **Customization**:
@@ -47,20 +48,25 @@ CT_GATEWAY=""                # Gateway for static IP
 
 ## 📖 Usage
 
-### Method 1: Direct Download and Execute
+### Method 1: One-Line Installation (Recommended)
 ```bash
-curl -sL https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh | bash
+bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh)
 ```
 
-### Method 2: Clone Repository
+### Method 2: One-Line with Custom Settings
+```bash
+CT_ID=250 CT_MEMORY=1024 CT_IP="192.168.1.100/24" CT_GATEWAY="192.168.1.1" \
+bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh)
+```
+
+### Method 3: Clone Repository
 ```bash
 git clone https://github.com/jeonghanyun/proxmox-lxc-shell-commands.git
 cd proxmox-lxc-shell-commands
-chmod +x *.sh
 ./proxmox-lxc-mailpit.sh
 ```
 
-### Method 3: wget
+### Method 4: wget
 ```bash
 wget https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-mailpit.sh
 chmod +x proxmox-lxc-mailpit.sh
