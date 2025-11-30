@@ -258,6 +258,26 @@ start_container() {
     success "Container started successfully"
 }
 
+configure_autologin() {
+    info "Configuring automatic console login..."
+
+    # Create systemd override directory for container-getty
+    pct exec "$CT_ID" -- bash -c "mkdir -p /etc/systemd/system/container-getty@1.service.d"
+
+    # Create autologin override configuration
+    pct exec "$CT_ID" -- bash -c 'cat > /etc/systemd/system/container-getty@1.service.d/override.conf << EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin root --noclear --keep-baud tty%I 115200,38400,9600 \$TERM
+EOF'
+
+    # Reload systemd and restart getty service
+    pct exec "$CT_ID" -- bash -c "systemctl daemon-reload"
+    pct exec "$CT_ID" -- bash -c "systemctl restart container-getty@1.service" 2>/dev/null || true
+
+    success "Automatic console login configured"
+}
+
 #################################################################
 # Mailpit Installation Functions
 #################################################################
@@ -393,6 +413,7 @@ main() {
     # Create and configure container
     create_container
     start_container
+    configure_autologin
 
     # Install and configure Mailpit
     install_mailpit
