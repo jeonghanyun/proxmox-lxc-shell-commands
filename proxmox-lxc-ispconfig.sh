@@ -5,7 +5,7 @@
 # OS: Debian 12 (Bookworm) - Auto-detected latest version
 # Ports: Web Panel: 8080, HTTP: 80, HTTPS: 443, SMTP: 25, IMAP: 143, POP3: 110
 # Repository: https://github.com/jeonghanyun/proxmox-lxc-shell-commands
-# Last Updated: 2025-11-30
+# Last Updated: 2025-12-01
 
 set -euo pipefail
 
@@ -409,11 +409,71 @@ EOF"
     # Clean up
     pct exec "$CT_ID" -- bash -c "rm -rf /tmp/ispconfig3_install /tmp/ISPConfig-${ISPCONFIG_VERSION}.tar.gz" || true
 
+    # Fix permissions for ISPConfig interface (required for mod_php)
+    progress "Fixing ISPConfig permissions..."
+    pct exec "$CT_ID" -- bash -c "chown -R ispconfig:www-data /usr/local/ispconfig/interface/"
+    pct exec "$CT_ID" -- bash -c "chmod -R g+r /usr/local/ispconfig/interface/"
+    pct exec "$CT_ID" -- bash -c "chmod -R 777 /usr/local/ispconfig/interface/temp"
+    pct exec "$CT_ID" -- bash -c "chown -R www-data:www-data /usr/local/ispconfig/interface/temp"
+    pct exec "$CT_ID" -- bash -c "chown -R ispconfig:www-data /var/www/ispconfig/"
+    pct exec "$CT_ID" -- bash -c "chmod -R g+r /var/www/ispconfig/"
+
     success "ISPConfig installed successfully"
+}
+
+configure_ispconfig_vhost() {
+    info "Configuring ISPConfig Apache vhost..."
+
+    # Fix ISPConfig vhost for mod_php (remove fcgid dependency)
+    pct exec "$CT_ID" -- bash -c "cat > /etc/apache2/sites-available/ispconfig.vhost << 'VHOSTEOF'
+######################################################
+# ISPConfig Control Panel Virtual Host
+######################################################
+
+Listen 8080
+
+<VirtualHost _default_:8080>
+  ServerAdmin webmaster@localhost
+  DocumentRoot /var/www/ispconfig/
+
+  <Directory /var/www/ispconfig/>
+    Options -Indexes +FollowSymLinks
+    AllowOverride All
+    Require all granted
+  </Directory>
+
+  # SSL Configuration
+  SSLEngine On
+  SSLProtocol All -SSLv3 -TLSv1 -TLSv1.1
+  SSLCertificateFile /usr/local/ispconfig/interface/ssl/ispserver.crt
+  SSLCertificateKeyFile /usr/local/ispconfig/interface/ssl/ispserver.key
+
+  SSLCipherSuite ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384
+  SSLHonorCipherOrder On
+
+  <IfModule mod_headers.c>
+    Header set Content-Security-Policy \"default-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data:; object-src 'none'; upgrade-insecure-requests\"
+    Header set X-Content-Type-Options: nosniff
+    Header set X-Frame-Options: SAMEORIGIN
+    Header set X-XSS-Protection: \"1; mode=block\"
+    Header setifempty Strict-Transport-Security \"max-age=15768000\"
+  </IfModule>
+
+  ServerSignature Off
+</VirtualHost>
+VHOSTEOF"
+
+    # Restart Apache to apply changes
+    pct exec "$CT_ID" -- bash -c "systemctl restart apache2"
+
+    success "ISPConfig vhost configured"
 }
 
 configure_services() {
     info "Configuring and starting services..."
+
+    # Configure ISPConfig vhost first
+    configure_ispconfig_vhost
 
     # Enable and start services
     local services=("apache2" "mariadb" "postfix" "dovecot" "bind9" "pure-ftpd-mysql" "fail2ban")

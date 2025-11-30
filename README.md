@@ -157,6 +157,47 @@ CT_IP="dhcp"                 # IP (dhcp or static like 192.168.1.100/24)
 CT_GATEWAY=""                # Gateway for static IP
 ```
 
+---
+
+### Coolify Self-Hosted PaaS
+
+**Script**: `proxmox-lxc-coolify.sh`
+
+Automatically creates and configures Coolify - a self-hosted Heroku/Netlify alternative - with Docker in a Debian 12 LXC container.
+
+**Features**:
+- 🚀 Coolify - Self-hosted PaaS (Heroku/Netlify alternative)
+- 🐳 Docker CE with Compose plugin
+- 🌐 Web UI on port 8000
+- 📦 Deploy apps from Git, Docker, or buildpacks
+- 🔄 Automatic deployments and rollbacks
+- 📊 Built-in monitoring and logging
+- 🔒 Free SSL certificates with Let's Encrypt
+- ⚠️ Requires **privileged container** for Docker support
+
+**Installation**:
+```bash
+# Basic installation
+bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-coolify.sh)
+
+# With custom settings
+CT_ID=201 CT_MEMORY=8192 CT_DISK_SIZE=50 bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-coolify.sh)
+```
+
+**Customization**:
+```bash
+CT_ID=201                    # Container ID
+CT_HOSTNAME="coolify"        # Hostname
+CT_CORES=2                   # CPU cores (minimum 2 recommended)
+CT_MEMORY=4096               # RAM in MB (minimum 4GB recommended)
+CT_DISK_SIZE=30              # Disk size in GB (minimum 30GB recommended)
+CT_IP="dhcp"                 # IP (dhcp or static like 192.168.1.100/24)
+CT_GATEWAY=""                # Gateway for static IP
+COOLIFY_WEB_PORT=8000        # Web UI port
+```
+
+**Note**: This creates a **privileged container** which is required for Docker to function properly. The container is configured with all necessary capabilities for running Docker.
+
 ## 🔧 Requirements
 
 - Proxmox VE 9.1+ (or compatible versions)
