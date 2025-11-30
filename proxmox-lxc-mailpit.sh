@@ -31,9 +31,9 @@ CT_NAMESERVER=${CT_NAMESERVER:-"8.8.8.8"}            # DNS server
 CT_STORAGE=${CT_STORAGE:-"local-lvm"}                 # Storage pool for container
 TEMPLATE_STORAGE=${TEMPLATE_STORAGE:-"local"}         # Storage pool for templates
 
-# Debian Template
+# Debian Template (will be auto-detected)
 DEBIAN_VERSION="12"                                    # Debian version
-TEMPLATE_NAME="debian-${DEBIAN_VERSION}-standard_${DEBIAN_VERSION}.7-1_amd64.tar.zst"
+TEMPLATE_NAME=""                                       # Auto-detected
 
 # Mailpit Configuration
 MAILPIT_SMTP_PORT=${MAILPIT_SMTP_PORT:-1025}          # SMTP listening port
@@ -98,18 +98,36 @@ check_container_exists() {
     fi
 }
 
-check_template_exists() {
-    local template_path="${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE_NAME}"
+detect_and_download_template() {
+    info "Detecting available Debian ${DEBIAN_VERSION} template..."
 
-    if ! pveam list "$TEMPLATE_STORAGE" | grep -q "$TEMPLATE_NAME"; then
-        warn "Debian template not found, downloading..."
-        pveam download "$TEMPLATE_STORAGE" "$TEMPLATE_NAME" || {
-            error "Failed to download template"
-            exit 1
-        }
+    # Get latest Debian template for the specified version
+    local available_template
+    available_template=$(pveam available | grep "debian-${DEBIAN_VERSION}" | grep "standard" | tail -1 | awk '{print $2}')
+
+    if [[ -z "$available_template" ]]; then
+        error "No Debian ${DEBIAN_VERSION} template found in available templates"
+        info "Try: pveam available | grep debian"
+        exit 1
+    fi
+
+    TEMPLATE_NAME="$available_template"
+    info "Found template: $TEMPLATE_NAME"
+
+    # Check if already downloaded
+    if pveam list "$TEMPLATE_STORAGE" | grep -q "$TEMPLATE_NAME"; then
+        success "Template already downloaded"
+        return 0
+    fi
+
+    # Download template
+    warn "Downloading Debian template..."
+    if pveam download "$TEMPLATE_STORAGE" "$TEMPLATE_NAME"; then
         success "Template downloaded successfully"
     else
-        info "Debian template already exists"
+        error "Failed to download template"
+        info "Please check your internet connection and storage permissions"
+        exit 1
     fi
 }
 
@@ -288,7 +306,7 @@ main() {
     check_root
     check_proxmox
     check_container_exists
-    check_template_exists
+    detect_and_download_template
 
     # Create and configure container
     create_container
