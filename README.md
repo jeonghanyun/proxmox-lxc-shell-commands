@@ -4,6 +4,46 @@ Collection of automated shell scripts for creating and configuring LXC container
 
 ## 📋 Available Scripts
 
+### Nextcloud File Hosting & Collaboration
+
+**Script**: `proxmox-lxc-nextcloud.sh`
+
+Automatically creates and configures Nextcloud 32.0.1 with PHP 8.3, MariaDB, and Redis in a Debian 12 LXC container.
+
+**Features**:
+- 🚀 Latest Nextcloud 32.0.1 (Hub 25 Autumn)
+- 🔧 PHP 8.3 with optimized settings
+- 🗄️ MariaDB with Nextcloud-optimized configuration
+- ⚡ Redis for caching and file locking
+- 🔐 Auto-generated secure passwords
+- 📝 Complete with OCC command setup
+
+**Quick Start**:
+```bash
+# One-line installation (recommended)
+bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-nextcloud.sh)
+
+# With custom settings
+CT_ID=300 CT_MEMORY=4096 bash <(curl -s https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-nextcloud.sh)
+
+# Alternative: Download and run
+curl -sL https://raw.githubusercontent.com/jeonghanyun/proxmox-lxc-shell-commands/master/proxmox-lxc-nextcloud.sh | bash
+```
+
+**Customization**:
+```bash
+CT_ID=202                    # Container ID
+CT_HOSTNAME="nextcloud"      # Hostname
+CT_CORES=2                   # CPU cores
+CT_MEMORY=2048               # RAM in MB (2GB recommended)
+CT_DISK_SIZE=20              # Disk size in GB
+CT_IP="dhcp"                 # IP (dhcp or static like 192.168.1.100/24)
+CT_GATEWAY=""                # Gateway for static IP
+NEXTCLOUD_ADMIN_USER="admin" # Admin username
+```
+
+---
+
 ### Mailpit Email Testing Server
 
 **Script**: `proxmox-lxc-mailpit.sh`
