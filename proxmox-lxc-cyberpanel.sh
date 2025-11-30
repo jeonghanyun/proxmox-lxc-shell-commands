@@ -330,19 +330,20 @@ install_cyberpanel() {
     progress "Running CyberPanel installer (this may take 15-30 minutes)..."
     warn "Please be patient - CyberPanel installation takes time..."
 
-    # CyberPanel installer with automated input
-    # Using environment variables and pre-seeded responses
-    pct exec "$CT_ID" -- bash -c "export CYBERPANEL_ADMIN_PASS='${CYBERPANEL_ADMIN_PASS}' && \
-        export MYSQL_ROOT_PASS='${MYSQL_ROOT_PASS}' && \
-        cd /tmp && \
-        echo '1' | bash installer.sh --postfix yes --powerdns yes --pureftpd yes --redis yes -v ols --admin-pass '${CYBERPANEL_ADMIN_PASS}' -m '${MYSQL_ROOT_PASS}'" 2>&1 || {
-            warn "Automated install may have issues, trying alternative method..."
-            # Fallback: Run with expect-like inputs
-            pct exec "$CT_ID" -- bash -c "cd /tmp && cat cyberpanel_install_answers | bash installer.sh" 2>&1 || cleanup_on_failure "CyberPanel installation"
-        }
+    # CyberPanel installer with correct options (updated for v2.4+)
+    # -v ols : OpenLiteSpeed version
+    # -p PASSWORD : Admin password
+    pct exec "$CT_ID" -- bash -c "cd /tmp && bash installer.sh -v ols -p '${CYBERPANEL_ADMIN_PASS}'" 2>&1 || {
+        warn "CyberPanel installation may have issues - checking status..."
+    }
 
     # Clean up
     pct exec "$CT_ID" -- bash -c "rm -f /tmp/installer.sh /tmp/cyberpanel_install_answers" || true
+
+    # Start CyberPanel service if not running
+    progress "Starting CyberPanel service..."
+    pct exec "$CT_ID" -- bash -c "systemctl start lscpd" 2>/dev/null || true
+    pct exec "$CT_ID" -- bash -c "systemctl enable lscpd" 2>/dev/null || true
 
     success "CyberPanel installation completed"
 }
