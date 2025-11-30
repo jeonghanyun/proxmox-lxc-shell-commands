@@ -96,6 +96,12 @@ Contributions welcome! Feel free to submit pull requests or open issues.
   - Common pitfalls and solutions
   - Complete with examples and troubleshooting
 
+- **[PROMPT-EXAMPLES.md](PROMPT-EXAMPLES.md)** - How to request new LXC scripts from AI
+  - Effective prompt writing guide
+  - Real-world examples (Taskosaur, Grafana, n8n, etc.)
+  - Good vs bad prompts comparison
+  - Step-by-step approach
+
 - **[template-script.sh](template-script.sh)** - Ready-to-use template for creating new LXC scripts
   - Pre-configured structure
   - Best practices built-in
