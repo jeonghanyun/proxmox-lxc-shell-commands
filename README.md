@@ -90,22 +90,9 @@ Contributions welcome! Feel free to submit pull requests or open issues.
 
 ## 📚 Documentation
 
-- **[GUIDE.md](GUIDE.md)** - Comprehensive guide for creating your own Proxmox LXC installation scripts
-  - Learn from real-world development experience
-  - Template management best practices
-  - Common pitfalls and solutions
-  - Complete with examples and troubleshooting
-
-- **[PROMPT-EXAMPLES.md](PROMPT-EXAMPLES.md)** - How to request new LXC scripts from AI
-  - Effective prompt writing guide
-  - Real-world examples (Taskosaur, Grafana, n8n, etc.)
-  - Good vs bad prompts comparison
-  - Step-by-step approach
-
-- **[template-script.sh](template-script.sh)** - Ready-to-use template for creating new LXC scripts
-  - Pre-configured structure
-  - Best practices built-in
-  - Easy to customize
+- **[PROMPT-EXAMPLES.md](PROMPT-EXAMPLES.md)** - AI에게 스크립트 요청하는 법 (간단!)
+- **[GUIDE.md](GUIDE.md)** - 직접 만들고 싶을 때 (상세 가이드)
+- **[template-script.sh](template-script.sh)** - 복사해서 바로 시작
 
 ## 📝 License
 
