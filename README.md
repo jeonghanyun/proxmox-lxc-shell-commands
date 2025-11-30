@@ -88,6 +88,19 @@ chmod +x proxmox-lxc-mailpit.sh
 
 Contributions welcome! Feel free to submit pull requests or open issues.
 
+## 📚 Documentation
+
+- **[GUIDE.md](GUIDE.md)** - Comprehensive guide for creating your own Proxmox LXC installation scripts
+  - Learn from real-world development experience
+  - Template management best practices
+  - Common pitfalls and solutions
+  - Complete with examples and troubleshooting
+
+- **[template-script.sh](template-script.sh)** - Ready-to-use template for creating new LXC scripts
+  - Pre-configured structure
+  - Best practices built-in
+  - Easy to customize
+
 ## 📝 License
 
 MIT License - Feel free to use and modify as needed.
