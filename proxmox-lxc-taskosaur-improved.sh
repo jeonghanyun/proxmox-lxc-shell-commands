@@ -357,6 +357,10 @@ EOF
         cleanup_on_failure "backend build"
     fi
 
+    # Copy .env to frontend directory for NEXT_PUBLIC_ variables
+    progress "Configuring frontend environment variables..."
+    pct exec "$CT_ID" -- bash -c "cp /opt/taskosaur/.env /opt/taskosaur/apps/frontend/.env.production.local"
+
     progress "Building Taskosaur frontend (this will take 5-10 minutes)..."
     if ! pct exec "$CT_ID" -- bash -c "cd /opt/taskosaur && npm run build --workspace=frontend 2>&1 | tail -20"; then
         error "Frontend build failed - check Node.js version and dependencies"
