@@ -41,6 +41,12 @@ GRIST_ORG=${GRIST_ORG:-"gupsa"}
 GRIST_ADMIN_EMAIL=${GRIST_ADMIN_EMAIL:-"jeonghan.yun@gupsa.com"}
 GRIST_DOMAIN=${GRIST_DOMAIN:-"grist.gupsa.net"}
 
+# Locale & API Configuration
+GRIST_LOCALE=${GRIST_LOCALE:-"ko"}
+GRIST_CURRENCY=${GRIST_CURRENCY:-"KRW"}
+GRIST_BOOT_KEY=${GRIST_BOOT_KEY:-"grist-api-boot-key-$(date +%s)"}
+GRIST_API_SECRET=${GRIST_API_SECRET:-"grist-api-secret-$(date +%s)"}
+
 # Keycloak SSO Configuration
 KEYCLOAK_ENABLED=${KEYCLOAK_ENABLED:-true}
 KEYCLOAK_REALM=${KEYCLOAK_REALM:-"master"}
@@ -222,6 +228,12 @@ install_grist() {
     grist_env+="      - GRIST_DEFAULT_EMAIL=${GRIST_ADMIN_EMAIL}\n"
     grist_env+="      - GRIST_FORCE_LOGIN=true\n"
     grist_env+="      - GRIST_DEFAULT_PRODUCT=team\n"
+    grist_env+="      # Locale & Currency\n"
+    grist_env+="      - GRIST_DEFAULT_LOCALE=${GRIST_LOCALE}\n"
+    grist_env+="      - GRIST_DEFAULT_CURRENCY=${GRIST_CURRENCY}\n"
+    grist_env+="      # API Configuration\n"
+    grist_env+="      - GRIST_BOOT_KEY=${GRIST_BOOT_KEY}\n"
+    grist_env+="      - GRIST_API_KEY_SECRET=${GRIST_API_SECRET}\n"
 
     # Keycloak SSO if enabled
     if [[ "$KEYCLOAK_ENABLED" == "true" ]]; then
@@ -412,6 +424,21 @@ Mailpit SMTP:    ${container_ip}:${MAILPIT_SMTP_PORT}
 
 Organization:    ${GRIST_ORG}
 Admin Email:     ${GRIST_ADMIN_EMAIL}
+Default Locale:  ${GRIST_LOCALE} (한국어)
+Default Currency: ${GRIST_CURRENCY} (₩)
+
+🔑 API CONFIGURATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Boot Key:        ${GRIST_BOOT_KEY}
+API Secret:      ${GRIST_API_SECRET}
+
+API Endpoints:
+  Base URL:      https://${GRIST_DOMAIN}/api
+  Docs:          https://${GRIST_DOMAIN}/apidocs
+
+Usage:
+  curl -H \"Authorization: Bearer \\\$API_KEY\" \\\\
+    https://${GRIST_DOMAIN}/api/orgs/${GRIST_ORG}/workspaces
 ${sso_info}
 📧 SMTP CONFIGURATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -469,6 +496,13 @@ display_info() {
     echo ""
     echo "  • Organization:      ${GRIST_ORG}"
     echo "  • Admin Email:       ${GRIST_ADMIN_EMAIL}"
+    echo "  • Locale:            ${GRIST_LOCALE} (한국어)"
+    echo "  • Currency:          ${GRIST_CURRENCY} (₩)"
+    echo ""
+    echo "API Configuration:"
+    echo "  • Boot Key:          ${GRIST_BOOT_KEY}"
+    echo "  • API Secret:        ${GRIST_API_SECRET}"
+    echo "  • API Docs:          https://${GRIST_DOMAIN}/apidocs"
     echo ""
     if [[ "$KEYCLOAK_ENABLED" == "true" ]]; then
         echo "SSO (Keycloak):"
