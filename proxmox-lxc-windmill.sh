@@ -3,9 +3,9 @@
 # Windmill LXC Installation Script
 # Description: Install Windmill - Open-source developer platform for APIs, scripts, workflows
 # OS: Debian 12 (Bookworm)
-# Ports: Web UI: 80 (Caddy proxy)
+# Ports: Web UI: 80 (Caddy proxy), MariaDB: 3306, PostgreSQL: 5432
 # Repository: https://github.com/jeonghanyun/proxmox-lxc-shell-commands
-# Last Updated: 2024-11
+# Last Updated: 2025-12
 
 set -euo pipefail
 
@@ -37,6 +37,23 @@ TEMPLATE_NAME=""
 
 # Windmill Configuration
 WINDMILL_PORT=${WINDMILL_PORT:-80}
+WINDMILL_EMAIL=${WINDMILL_EMAIL:-"devops@gupsa.com"}
+WINDMILL_PASSWORD=${WINDMILL_PASSWORD:-"Akehdtjr1@"}
+WINDMILL_DEFAULT_EMAIL="admin@windmill.dev"
+WINDMILL_DEFAULT_PASSWORD="changeme"
+
+# Database Configuration
+MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-"windmill_root_2024"}
+MYSQL_DATABASE=${MYSQL_DATABASE:-"windmill_db"}
+MYSQL_USER=${MYSQL_USER:-"windmill"}
+MYSQL_PASSWORD=${MYSQL_PASSWORD:-"windmill_mysql_2024"}
+
+PG_DATABASE=${PG_DATABASE:-"windmill_db"}
+PG_USER=${PG_USER:-"windmill"}
+PG_PASSWORD=${PG_PASSWORD:-"windmill_pg_2024"}
+
+# API Token (will be generated)
+WINDMILL_API_TOKEN=""
 
 # Container Options
 CT_ONBOOT=${CT_ONBOOT:-1}
@@ -166,6 +183,61 @@ EOF'
 }
 
 #################################################################
+# Database Installation Functions
+#################################################################
+
+install_mariadb() {
+    info "Installing MariaDB..."
+
+    pct exec "$CT_ID" -- bash -c "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mariadb-server mariadb-client"
+
+    pct exec "$CT_ID" -- bash -c "systemctl enable mariadb && systemctl start mariadb"
+
+    # Configure MariaDB
+    pct exec "$CT_ID" -- bash -c "mysql -u root << EOSQL
+ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD}';
+CREATE DATABASE IF NOT EXISTS ${MYSQL_DATABASE} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '${MYSQL_USER}'@'localhost' IDENTIFIED BY '${MYSQL_PASSWORD}';
+CREATE USER IF NOT EXISTS '${MYSQL_USER}'@'%' IDENTIFIED BY '${MYSQL_PASSWORD}';
+GRANT ALL PRIVILEGES ON ${MYSQL_DATABASE}.* TO '${MYSQL_USER}'@'localhost';
+GRANT ALL PRIVILEGES ON ${MYSQL_DATABASE}.* TO '${MYSQL_USER}'@'%';
+FLUSH PRIVILEGES;
+EOSQL"
+
+    success "MariaDB installed and configured"
+}
+
+install_postgresql() {
+    info "Installing PostgreSQL..."
+
+    pct exec "$CT_ID" -- bash -c "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql postgresql-contrib"
+
+    pct exec "$CT_ID" -- bash -c "systemctl enable postgresql && systemctl start postgresql"
+
+    sleep 3
+
+    # Configure PostgreSQL
+    pct exec "$CT_ID" -- bash -c "su - postgres -c \"psql << EOSQL
+CREATE USER ${PG_USER} WITH PASSWORD '${PG_PASSWORD}';
+CREATE DATABASE ${PG_DATABASE} OWNER ${PG_USER};
+GRANT ALL PRIVILEGES ON DATABASE ${PG_DATABASE} TO ${PG_USER};
+ALTER USER ${PG_USER} CREATEDB;
+EOSQL\""
+
+    # Configure remote access
+    pct exec "$CT_ID" -- bash -c '
+        PG_HBA=$(find /etc/postgresql -name pg_hba.conf | head -1)
+        echo "host    all             all             0.0.0.0/0               scram-sha-256" >> "$PG_HBA"
+        PG_CONF=$(find /etc/postgresql -name postgresql.conf | head -1)
+        sed -i "s/#listen_addresses = '\''localhost'\''/listen_addresses = '\''*'\''/" "$PG_CONF"
+    '
+
+    pct exec "$CT_ID" -- bash -c "systemctl restart postgresql"
+
+    success "PostgreSQL installed and configured"
+}
+
+#################################################################
 # Windmill Installation Functions
 #################################################################
 
@@ -222,6 +294,92 @@ install_windmill() {
     fi
 }
 
+configure_windmill_account() {
+    info "Configuring Windmill account and API..."
+
+    local container_ip
+    if [[ "$CT_IP" == "dhcp" ]]; then
+        container_ip=$(pct exec "$CT_ID" -- hostname -I 2>/dev/null | awk '{print $1}')
+    else
+        container_ip="${CT_IP%/*}"
+    fi
+
+    local windmill_url="http://${container_ip}"
+
+    # Wait for Windmill API to be ready
+    info "Waiting for Windmill API to be ready..."
+    local max_attempts=30
+    local attempt=0
+    while [[ $attempt -lt $max_attempts ]]; do
+        if curl -s "${windmill_url}/api/version" >/dev/null 2>&1; then
+            success "Windmill API is ready"
+            break
+        fi
+        sleep 2
+        ((attempt++))
+    done
+
+    if [[ $attempt -eq $max_attempts ]]; then
+        warn "Windmill API not responding, skipping account configuration"
+        return 1
+    fi
+
+    # Login with default credentials
+    info "Logging in with default credentials..."
+    local default_token
+    default_token=$(curl -s "${windmill_url}/api/auth/login" -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"email\":\"${WINDMILL_DEFAULT_EMAIL}\",\"password\":\"${WINDMILL_DEFAULT_PASSWORD}\"}" 2>/dev/null)
+
+    if [[ -z "$default_token" ]] || [[ "$default_token" == *"Invalid"* ]]; then
+        warn "Could not login with default credentials, account may already be configured"
+        return 1
+    fi
+
+    # Create new user account
+    info "Creating new admin account: ${WINDMILL_EMAIL}..."
+    curl -s "${windmill_url}/api/users/create" -X POST \
+        -H "Authorization: Bearer ${default_token}" \
+        -H "Content-Type: application/json" \
+        -d "{\"email\":\"${WINDMILL_EMAIL}\",\"password\":\"${WINDMILL_PASSWORD}\",\"super_admin\":true,\"name\":\"DevOps Admin\"}" >/dev/null 2>&1
+
+    # Add user to admins workspace
+    curl -s "${windmill_url}/api/w/admins/users/add" -X POST \
+        -H "Authorization: Bearer ${default_token}" \
+        -H "Content-Type: application/json" \
+        -d "{\"email\":\"${WINDMILL_EMAIL}\",\"is_admin\":true}" >/dev/null 2>&1
+
+    # Login with new account
+    info "Logging in with new account..."
+    WINDMILL_API_TOKEN=$(curl -s "${windmill_url}/api/auth/login" -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"email\":\"${WINDMILL_EMAIL}\",\"password\":\"${WINDMILL_PASSWORD}\"}" 2>/dev/null)
+
+    if [[ -z "$WINDMILL_API_TOKEN" ]] || [[ "$WINDMILL_API_TOKEN" == *"Invalid"* ]]; then
+        warn "Could not login with new account, trying default token"
+        WINDMILL_API_TOKEN="$default_token"
+    fi
+
+    success "Windmill account configured"
+
+    # Create database resources
+    info "Creating database resources..."
+
+    # Create PostgreSQL resource
+    curl -s "${windmill_url}/api/w/admins/resources/create" -X POST \
+        -H "Authorization: Bearer ${WINDMILL_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{\"path\":\"f/db/postgresql_local\",\"value\":{\"host\":\"localhost\",\"port\":5432,\"user\":\"${PG_USER}\",\"dbname\":\"${PG_DATABASE}\",\"password\":\"${PG_PASSWORD}\",\"sslmode\":\"disable\"},\"resource_type\":\"postgresql\",\"description\":\"Local PostgreSQL database\"}" >/dev/null 2>&1
+
+    # Create MySQL resource
+    curl -s "${windmill_url}/api/w/admins/resources/create" -X POST \
+        -H "Authorization: Bearer ${WINDMILL_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{\"path\":\"f/db/mysql_local\",\"value\":{\"host\":\"localhost\",\"port\":3306,\"user\":\"${MYSQL_USER}\",\"database\":\"${MYSQL_DATABASE}\",\"password\":\"${MYSQL_PASSWORD}\"},\"resource_type\":\"mysql\",\"description\":\"Local MySQL/MariaDB database\"}" >/dev/null 2>&1
+
+    success "Database resources created"
+}
+
 add_container_notes() {
     info "Adding container notes..."
 
@@ -236,7 +394,7 @@ add_container_notes() {
         container_ip="${CT_IP%/*}"
     fi
 
-    local notes="Windmill - Developer Platform
+    local notes="Windmill - Developer Platform for Scripts/Workflows/Apps
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📋 CONTAINER DETAILS
@@ -248,23 +406,52 @@ CPU Cores:       ${CT_CORES}
 Memory:          ${CT_MEMORY}MB
 Disk Size:       ${CT_DISK_SIZE}GB
 
-🌐 APPLICATION ACCESS
+🌐 WINDMILL ACCESS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Web UI:          http://${container_ip}
+Email:           ${WINDMILL_EMAIL}
+Password:        ${WINDMILL_PASSWORD}
 
-📧 DEFAULT CREDENTIALS
+🔑 API TOKEN
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Email:           admin@windmill.dev
-Password:        changeme
+Token:           ${WINDMILL_API_TOKEN:-"[Login to generate]"}
 
-⚠️  CHANGE DEFAULT PASSWORD IMMEDIATELY!
+Usage:
+curl -H \"Authorization: Bearer \${TOKEN}\" http://${container_ip}/api/...
+
+🗄️ MARIADB (MySQL)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Port:            3306
+Root Password:   ${MYSQL_ROOT_PASSWORD}
+Database:        ${MYSQL_DATABASE}
+Username:        ${MYSQL_USER}
+Password:        ${MYSQL_PASSWORD}
+
+Connection String:
+mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@${container_ip}:3306/${MYSQL_DATABASE}
+
+Windmill Resource: f/db/mysql_local
+
+🐘 POSTGRESQL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Port:            5432
+Database:        ${PG_DATABASE}
+Username:        ${PG_USER}
+Password:        ${PG_PASSWORD}
+
+Connection String:
+postgresql://${PG_USER}:${PG_PASSWORD}@${container_ip}:5432/${PG_DATABASE}
+
+Windmill Resource: f/db/postgresql_local
 
 🔧 SERVICE MANAGEMENT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Logs:            pct exec ${CT_ID} -- docker compose -f /opt/windmill/docker-compose.yml logs -f
+Windmill:        pct exec ${CT_ID} -- docker ps
+MariaDB Status:  pct exec ${CT_ID} -- systemctl status mariadb
+PostgreSQL:      pct exec ${CT_ID} -- systemctl status postgresql
+
+Windmill Logs:   pct exec ${CT_ID} -- docker compose -f /opt/windmill/docker-compose.yml logs -f
 Restart:         pct exec ${CT_ID} -- docker compose -f /opt/windmill/docker-compose.yml restart
-Stop:            pct exec ${CT_ID} -- docker compose -f /opt/windmill/docker-compose.yml down
-Start:           pct exec ${CT_ID} -- docker compose -f /opt/windmill/docker-compose.yml up -d
 
 📦 CONTAINER MANAGEMENT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -299,14 +486,29 @@ display_info() {
     echo "  • Hostname:          $CT_HOSTNAME"
     echo "  • IP Address:        $container_ip"
     echo ""
-    echo "Application Access:"
+    echo "Windmill Access:"
     echo "  • Web UI:            http://${container_ip}"
+    echo "  • Email:             ${WINDMILL_EMAIL}"
+    echo "  • Password:          ${WINDMILL_PASSWORD}"
     echo ""
-    echo "Default Login:"
-    echo "  • Email:             admin@windmill.dev"
-    echo "  • Password:          changeme"
+    if [[ -n "$WINDMILL_API_TOKEN" ]]; then
+        echo "API Token:"
+        echo "  • Token:             ${WINDMILL_API_TOKEN}"
+        echo ""
+    fi
+    echo "MariaDB (MySQL):"
+    echo "  • Port:              3306"
+    echo "  • Database:          ${MYSQL_DATABASE}"
+    echo "  • User:              ${MYSQL_USER}"
+    echo "  • Password:          ${MYSQL_PASSWORD}"
+    echo "  • Resource:          f/db/mysql_local"
     echo ""
-    warn "⚠️  CHANGE DEFAULT PASSWORD IMMEDIATELY!"
+    echo "PostgreSQL:"
+    echo "  • Port:              5432"
+    echo "  • Database:          ${PG_DATABASE}"
+    echo "  • User:              ${PG_USER}"
+    echo "  • Password:          ${PG_PASSWORD}"
+    echo "  • Resource:          f/db/postgresql_local"
     echo ""
     echo "Service Management:"
     echo "  • Logs:              pct exec $CT_ID -- docker compose -f /opt/windmill/docker-compose.yml logs -f"
@@ -333,7 +535,10 @@ main() {
     configure_autologin
 
     install_docker
+    install_mariadb
+    install_postgresql
     install_windmill
+    configure_windmill_account
 
     add_container_notes
     display_info
