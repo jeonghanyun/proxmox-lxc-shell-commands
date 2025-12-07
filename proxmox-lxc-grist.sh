@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 # Grist LXC Installation Script
-# Description: Install Grist - Modern Spreadsheet with Keycloak SSO & Mailpit
+# Description: Install Grist - Modern Spreadsheet with Keycloak SSO, Mailpit & Custom Widgets
 # OS: Debian 12 (Bookworm)
-# Ports: Web UI: 8484, Mailpit Web: 8025, Mailpit SMTP: 1025
+# Ports: Web UI: 8484, Mailpit Web: 8025, Mailpit SMTP: 1025, Widgets: 8585
 # Repository: https://github.com/jeonghanyun/proxmox-lxc-shell-commands
 # Last Updated: 2025-12
 
@@ -57,6 +57,11 @@ KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET:-"grist-secret-2024"}
 # Mailpit Configuration
 MAILPIT_WEB_PORT=${MAILPIT_WEB_PORT:-8025}
 MAILPIT_SMTP_PORT=${MAILPIT_SMTP_PORT:-1025}
+
+# Widget Configuration
+WIDGETS_ENABLED=${WIDGETS_ENABLED:-true}
+WIDGETS_PORT=${WIDGETS_PORT:-8585}
+WIDGETS_REPO=${WIDGETS_REPO:-"https://github.com/gristlabs/grist-widget.git"}
 
 # Container Options - MUST be privileged for Docker
 CT_ONBOOT=${CT_ONBOOT:-1}
@@ -254,6 +259,15 @@ install_grist() {
     grist_env+="      # Timezone\n"
     grist_env+="      - TZ=Asia/Seoul"
 
+    # Add widget configuration if enabled
+    local widget_config=""
+    local extra_hosts=""
+    if [[ "$WIDGETS_ENABLED" == "true" ]]; then
+        grist_env+="\n      # Custom Widgets\n"
+        grist_env+="      - GRIST_WIDGET_LIST_URL=http://host.docker.internal:${WIDGETS_PORT}/manifest.json"
+        extra_hosts="    extra_hosts:\n      - \"host.docker.internal:host-gateway\""
+    fi
+
     # Create docker-compose.yml
     pct exec "$CT_ID" -- bash -c "cat > /opt/grist/docker-compose.yml << 'EOF'
 services:
@@ -262,6 +276,7 @@ services:
     container_name: grist
     ports:
       - \"${GRIST_PORT}:8484\"
+$(if [[ -n "$extra_hosts" ]]; then echo -e "$extra_hosts"; fi)
     environment:
 $(echo -e "$grist_env")
     volumes:
@@ -314,6 +329,69 @@ EOF"
     if [[ $attempt -eq $max_attempts ]]; then
         warn "Grist may still be initializing. Check status with: pct exec $CT_ID -- docker ps"
     fi
+}
+
+#################################################################
+# Widget Installation Functions
+#################################################################
+
+install_widgets() {
+    if [[ "$WIDGETS_ENABLED" != "true" ]]; then
+        info "Widgets disabled, skipping..."
+        return 0
+    fi
+
+    info "Installing Grist custom widgets..."
+
+    # Install required packages (git, nginx, nodejs, npm)
+    pct exec "$CT_ID" -- bash -c "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git nginx nodejs npm"
+
+    # Clone grist-widget repository
+    pct exec "$CT_ID" -- bash -c "cd /opt && git clone ${WIDGETS_REPO}"
+
+    # Install dependencies and build
+    info "Building widgets (this may take a few minutes)..."
+    pct exec "$CT_ID" -- bash -c "cd /opt/grist-widget && npm install --legacy-peer-deps"
+    pct exec "$CT_ID" -- bash -c "cd /opt/grist-widget && git submodule update --init --recursive"
+    pct exec "$CT_ID" -- bash -c "cd /opt/grist-widget && npx tsc --build"
+
+    # Get container IP for widget URLs
+    local container_ip
+    container_ip=$(pct exec "$CT_ID" -- hostname -I | awk '{print $1}')
+
+    # Build manifest with correct URL
+    pct exec "$CT_ID" -- bash -c "cd /opt/grist-widget && node ./buildtools/publish.js manifest.json http://${container_ip}:${WIDGETS_PORT}"
+
+    # Configure nginx for widget serving
+    pct exec "$CT_ID" -- bash -c "cat > /etc/nginx/sites-available/grist-widget << 'NGINXEOF'
+server {
+    listen ${WIDGETS_PORT};
+    root /opt/grist-widget;
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+        add_header Access-Control-Allow-Origin *;
+        add_header Access-Control-Allow-Methods 'GET, POST, OPTIONS';
+        add_header Access-Control-Allow-Headers 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range';
+    }
+
+    location ~* \.(json|js|css|html)$ {
+        add_header Access-Control-Allow-Origin *;
+        add_header Cache-Control 'no-cache';
+    }
+}
+NGINXEOF"
+
+    # Enable nginx site and start
+    pct exec "$CT_ID" -- bash -c "ln -sf /etc/nginx/sites-available/grist-widget /etc/nginx/sites-enabled/"
+    pct exec "$CT_ID" -- bash -c "nginx -t && systemctl enable nginx && systemctl restart nginx"
+
+    # Count installed widgets
+    local widget_count
+    widget_count=$(pct exec "$CT_ID" -- bash -c "curl -s http://localhost:${WIDGETS_PORT}/manifest.json | grep -c '\"name\"'" 2>/dev/null || echo "0")
+
+    success "Installed ${widget_count} custom widgets"
 }
 
 configure_grist_permissions() {
@@ -446,6 +524,17 @@ SMTP Host:       mailpit (internal) / ${container_ip} (external)
 SMTP Port:       ${MAILPIT_SMTP_PORT}
 From Address:    grist@${GRIST_DOMAIN#*.}
 
+🧩 CUSTOM WIDGETS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Widget Server:   http://${container_ip}:${WIDGETS_PORT}
+Manifest URL:    http://${container_ip}:${WIDGETS_PORT}/manifest.json
+Repository:      https://github.com/gristlabs/grist-widget
+
+Available widgets include:
+  • Calendar, Map, Chart, QR Code
+  • Markdown, Pivot Table, Timeline
+  • Invoice, Print Labels, and more...
+
 🔧 SERVICE MANAGEMENT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Status:          pct exec ${CT_ID} -- docker ps
@@ -511,6 +600,12 @@ display_info() {
         echo "  • Client ID:         ${KEYCLOAK_CLIENT_ID}"
         echo ""
     fi
+    if [[ "$WIDGETS_ENABLED" == "true" ]]; then
+        echo "Custom Widgets:"
+        echo "  • Widget Server:     http://${container_ip}:${WIDGETS_PORT}"
+        echo "  • Includes:          Calendar, Map, Chart, QR Code, etc."
+        echo ""
+    fi
     echo "Service Management:"
     echo "  • Status:            pct exec $CT_ID -- docker ps"
     echo "  • Logs:              pct exec $CT_ID -- docker logs grist -f"
@@ -538,6 +633,7 @@ main() {
 
     install_docker
     install_grist
+    install_widgets
     configure_grist_permissions
 
     add_container_notes
