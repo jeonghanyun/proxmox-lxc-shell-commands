@@ -257,7 +257,9 @@ install_grist() {
     grist_env+="      # Session\n"
     grist_env+="      - GRIST_SESSION_SECRET=grist-session-secret-$(date +%s)\n"
     grist_env+="      # Timezone\n"
-    grist_env+="      - TZ=Asia/Seoul"
+    grist_env+="      - TZ=Asia/Seoul\n"
+    grist_env+="      # Sandbox (gvisor for secure Python formula execution)\n"
+    grist_env+="      - GRIST_SANDBOX_FLAVOR=gvisor"
 
     # Add widget configuration if enabled
     local widget_config=""
