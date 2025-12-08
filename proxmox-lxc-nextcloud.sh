@@ -6,7 +6,18 @@
 # Nextcloud Version: 32.0.1 (Hub 25 Autumn) - Latest as of Nov 2025
 # Ports: Web: 80, HTTPS: 443
 # Repository: https://github.com/jeonghanyun/proxmox-lxc-shell-commands
-# Last Updated: 2025-11-30
+# Last Updated: 2025-12-02
+#
+# OPcache Settings (optimized for Nextcloud):
+#   - memory_consumption: 1024MB
+#   - interned_strings_buffer: 512MB
+#   - JIT enabled with 128MB buffer
+# Recommended: CT_MEMORY=4096 or higher for production use
+#
+# Notes:
+#   - AppAPI is auto-disabled due to Docker API version incompatibility
+#     (AppAPI requires Docker API v1.41, but Docker 29+ requires v1.44+)
+#   - HSTS header is enabled by default for security
 
 set -euo pipefail
 
@@ -18,7 +29,7 @@ set -euo pipefail
 CT_ID=${CT_ID:-202}                                    # Container ID
 CT_HOSTNAME=${CT_HOSTNAME:-"nextcloud"}                # Container hostname
 CT_CORES=${CT_CORES:-2}                                # CPU cores
-CT_MEMORY=${CT_MEMORY:-2048}                           # RAM in MB (Nextcloud needs 512MB minimum)
+CT_MEMORY=${CT_MEMORY:-4096}                           # RAM in MB (4GB recommended for OPcache settings)
 CT_SWAP=${CT_SWAP:-1024}                               # Swap in MB
 CT_DISK_SIZE=${CT_DISK_SIZE:-20}                       # Root disk size in GB
 
@@ -359,12 +370,35 @@ configure_php() {
     pct exec "$CT_ID" -- bash -c "sed -i 's/post_max_size = .*/post_max_size = 10G/' /etc/php/${PHP_VERSION}/apache2/php.ini"
     pct exec "$CT_ID" -- bash -c "sed -i 's/max_execution_time = .*/max_execution_time = 3600/' /etc/php/${PHP_VERSION}/apache2/php.ini"
     pct exec "$CT_ID" -- bash -c "sed -i 's/;date.timezone.*/date.timezone = UTC/' /etc/php/${PHP_VERSION}/apache2/php.ini"
+
+    # Configure OPcache in php.ini (base settings)
     pct exec "$CT_ID" -- bash -c "sed -i 's/;opcache.enable=.*/opcache.enable=1/' /etc/php/${PHP_VERSION}/apache2/php.ini"
-    pct exec "$CT_ID" -- bash -c "sed -i 's/;opcache.memory_consumption=.*/opcache.memory_consumption=128/' /etc/php/${PHP_VERSION}/apache2/php.ini"
-    pct exec "$CT_ID" -- bash -c "sed -i 's/;opcache.interned_strings_buffer=.*/opcache.interned_strings_buffer=8/' /etc/php/${PHP_VERSION}/apache2/php.ini"
+    pct exec "$CT_ID" -- bash -c "sed -i 's/;opcache.memory_consumption=.*/opcache.memory_consumption=1024/' /etc/php/${PHP_VERSION}/apache2/php.ini"
+    pct exec "$CT_ID" -- bash -c "sed -i 's/opcache.memory_consumption=.*/opcache.memory_consumption=1024/' /etc/php/${PHP_VERSION}/apache2/php.ini"
+    pct exec "$CT_ID" -- bash -c "sed -i 's/;opcache.interned_strings_buffer=.*/opcache.interned_strings_buffer=512/' /etc/php/${PHP_VERSION}/apache2/php.ini"
+    pct exec "$CT_ID" -- bash -c "sed -i 's/opcache.interned_strings_buffer=.*/opcache.interned_strings_buffer=512/' /etc/php/${PHP_VERSION}/apache2/php.ini"
     pct exec "$CT_ID" -- bash -c "sed -i 's/;opcache.max_accelerated_files=.*/opcache.max_accelerated_files=10000/' /etc/php/${PHP_VERSION}/apache2/php.ini"
     pct exec "$CT_ID" -- bash -c "sed -i 's/;opcache.revalidate_freq=.*/opcache.revalidate_freq=1/' /etc/php/${PHP_VERSION}/apache2/php.ini"
     pct exec "$CT_ID" -- bash -c "sed -i 's/;opcache.save_comments=.*/opcache.save_comments=1/' /etc/php/${PHP_VERSION}/apache2/php.ini"
+
+    # Configure OPcache in opcache.ini (overrides php.ini settings loaded via conf.d)
+    # This is critical because /etc/php/8.3/mods-available/opcache.ini is loaded after php.ini
+    progress "Configuring OPcache module settings..."
+    pct exec "$CT_ID" -- bash -c "cat > /etc/php/${PHP_VERSION}/mods-available/opcache.ini" <<'EOF'
+; OPcache configuration optimized for Nextcloud
+; This file overrides php.ini settings
+
+opcache.enable=1
+opcache.interned_strings_buffer=512
+opcache.max_accelerated_files=10000
+opcache.memory_consumption=1024
+opcache.save_comments=1
+opcache.revalidate_freq=1
+
+; JIT compilation for improved performance (PHP 8+)
+opcache.jit=1255
+opcache.jit_buffer_size=128M
+EOF
 
     success "PHP configured successfully"
 }
@@ -408,6 +442,9 @@ configure_apache() {
 <VirtualHost *:80>
     DocumentRoot /var/www/nextcloud
     ServerName nextcloud
+
+    # Security headers
+    Header always set Strict-Transport-Security "max-age=15552000; includeSubDomains"
 
     <Directory /var/www/nextcloud/>
         Require all granted
@@ -483,6 +520,14 @@ configure_nextcloud() {
 
     # Add cron job for www-data user
     pct exec "$CT_ID" -- bash -c "echo '*/5 * * * * php -f /var/www/nextcloud/cron.php' | sudo -u www-data crontab -" || warn "Cron job setup failed"
+
+    # Disable AppAPI if installed (Docker API version compatibility issue)
+    # AppAPI hardcodes Docker API v1.41, but newer Docker versions require v1.44+
+    progress "Checking and disabling AppAPI if installed..."
+    if pct exec "$CT_ID" -- bash -c "cd /var/www/nextcloud && sudo -u www-data php occ app:list --enabled 2>/dev/null | grep -q app_api"; then
+        pct exec "$CT_ID" -- bash -c "cd /var/www/nextcloud && sudo -u www-data php occ app:disable app_api" || warn "AppAPI disable failed"
+        success "AppAPI disabled (Docker API version incompatibility)"
+    fi
 
     success "Nextcloud configured successfully"
 }
